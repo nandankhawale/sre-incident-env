@@ -1,0 +1,269 @@
+[
+  {
+    "id": "scenario_001",
+    "task": "easy",
+    "seed": 42,
+    "description": "Payment service is failing after a bad deploy and users cannot complete checkout.",
+    "initial_services": {
+      "frontend": "ok",
+      "auth": "ok",
+      "payment": "critical",
+      "database": "ok",
+      "order": "ok"
+    },
+    "initial_metrics": {
+      "payment_error_rate": 0.94,
+      "payment_latency_p99": 12.1,
+      "database_cpu_pct": 45.0,
+      "auth_latency_p99": 0.3
+    },
+    "initial_alerts": [
+      {
+        "name": "payment_high_error_rate",
+        "severity": "P0",
+        "service": "payment",
+        "message": "Payment service error rate 94% — users cannot checkout",
+        "is_red_herring": false
+      }
+    ],
+    "root_cause": "payment_bad_deploy",
+    "correct_actions": [
+      "check_logs:payment",
+      "rollback_deploy:payment"
+    ],
+    "resolution_condition": {
+      "payment": "ok"
+    },
+    "sla_threshold_seconds": 300,
+    "hint": "A deploy was pushed to payment service 10 minutes ago."
+  },
+  {
+    "id": "scenario_002",
+    "task": "easy",
+    "seed": 84,
+    "description": "Database connection pool exhaustion is slowing requests and causing intermittent failures.",
+    "initial_services": {
+      "frontend": "ok",
+      "auth": "ok",
+      "payment": "ok",
+      "database": "degraded",
+      "order": "ok"
+    },
+    "initial_metrics": {
+      "database_cpu_pct": 78.0,
+      "database_conn_pool_pct": 99.0,
+      "payment_latency_p99": 1.7,
+      "auth_latency_p99": 0.5
+    },
+    "initial_alerts": [
+      {
+        "name": "database_connection_pool_exhausted",
+        "severity": "P1",
+        "service": "database",
+        "message": "Database connection pool utilization is at 99%",
+        "is_red_herring": false
+      }
+    ],
+    "root_cause": "database_connection_pool_exhausted",
+    "correct_actions": [
+      "scale_up:database"
+    ],
+    "resolution_condition": {
+      "database": "ok"
+    },
+    "sla_threshold_seconds": 300,
+    "hint": "Connection pool saturation started after traffic doubled during a flash sale."
+  },
+  {
+    "id": "scenario_003",
+    "task": "medium",
+    "seed": 126,
+    "description": "An overloaded database is causing payment failures while an unrelated auth alert adds noise.",
+    "initial_services": {
+      "frontend": "ok",
+      "auth": "ok",
+      "payment": "critical",
+      "database": "critical",
+      "order": "degraded"
+    },
+    "initial_metrics": {
+      "payment_error_rate": 0.88,
+      "payment_latency_p99": 9.4,
+      "database_cpu_pct": 97.0,
+      "auth_latency_p99": 0.4
+    },
+    "initial_alerts": [
+      {
+        "name": "payment_checkout_failures",
+        "severity": "P0",
+        "service": "payment",
+        "message": "Payment requests are failing due to downstream dependency timeouts",
+        "is_red_herring": false
+      },
+      {
+        "name": "database_cpu_saturation",
+        "severity": "P1",
+        "service": "database",
+        "message": "Database CPU remains above 95% for the last 15 minutes",
+        "is_red_herring": false
+      },
+      {
+        "name": "auth_jwt_refresh_warning",
+        "severity": "P2",
+        "service": "auth",
+        "message": "Auth token refresh retries increased slightly after a config reload",
+        "is_red_herring": true
+      }
+    ],
+    "root_cause": "database_overload_cascade",
+    "correct_actions": [
+      "check_logs:database",
+      "scale_up:database"
+    ],
+    "resolution_condition": {
+      "database": "ok",
+      "payment": "ok"
+    },
+    "sla_threshold_seconds": 420,
+    "hint": null
+  },
+  {
+    "id": "scenario_004",
+    "task": "medium",
+    "seed": 168,
+    "description": "A bad auth deploy is degrading order and payment flows while multiple unrelated alerts distract the responder.",
+    "initial_services": {
+      "frontend": "ok",
+      "auth": "critical",
+      "payment": "degraded",
+      "database": "ok",
+      "order": "degraded"
+    },
+    "initial_metrics": {
+      "payment_error_rate": 0.31,
+      "payment_latency_p99": 3.7,
+      "database_cpu_pct": 41.0,
+      "auth_latency_p99": 4.8,
+      "order_latency_p99": 2.9
+    },
+    "initial_alerts": [
+      {
+        "name": "auth_5xx_spike",
+        "severity": "P0",
+        "service": "auth",
+        "message": "Auth service 5xx rate spiked after the last deployment",
+        "is_red_herring": false
+      },
+      {
+        "name": "payment_dependency_latency",
+        "severity": "P1",
+        "service": "payment",
+        "message": "Payment service latency increased while waiting on auth responses",
+        "is_red_herring": false
+      },
+      {
+        "name": "frontend_static_asset_warning",
+        "severity": "P2",
+        "service": "frontend",
+        "message": "A CDN edge reports stale frontend assets in one region",
+        "is_red_herring": true
+      },
+      {
+        "name": "database_backup_lag_notice",
+        "severity": "P2",
+        "service": "database",
+        "message": "Nightly backup lag exceeds the informational threshold",
+        "is_red_herring": true
+      }
+    ],
+    "root_cause": "auth_bad_deploy_cascade",
+    "correct_actions": [
+      "check_logs:auth",
+      "rollback_deploy:auth"
+    ],
+    "resolution_condition": {
+      "auth": "ok",
+      "payment": "ok",
+      "order": "ok"
+    },
+    "sla_threshold_seconds": 420,
+    "hint": null
+  },
+  {
+    "id": "scenario_005",
+    "task": "hard",
+    "seed": 210,
+    "description": "A critical database incident is cascading into payment outages while noisy alerts and a faulty metric obscure the root cause.",
+    "initial_services": {
+      "frontend": "ok",
+      "auth": "ok",
+      "payment": "down",
+      "database": "critical",
+      "order": "critical"
+    },
+    "initial_metrics": {
+      "payment_error_rate": 0.99,
+      "payment_latency_p99": 15.4,
+      "database_cpu_pct": 98.0,
+      "auth_latency_p99": 0.3,
+      "order_latency_p99": 6.8,
+      "frontend_error_rate": 0.0
+    },
+    "initial_alerts": [
+      {
+        "name": "payment_total_checkout_failure",
+        "severity": "P0",
+        "service": "payment",
+        "message": "Checkout requests fail for nearly all users",
+        "is_red_herring": false
+      },
+      {
+        "name": "database_primary_cpu_critical",
+        "severity": "P1",
+        "service": "database",
+        "message": "Database primary CPU is saturated and query queues are building",
+        "is_red_herring": false
+      },
+      {
+        "name": "order_backlog_growth",
+        "severity": "P1",
+        "service": "order",
+        "message": "Order service backlog is growing because payment confirmations are missing",
+        "is_red_herring": false
+      },
+      {
+        "name": "frontend_js_exception_spike",
+        "severity": "P1",
+        "service": "frontend",
+        "message": "Frontend alert shows elevated JS exceptions, but the metric panel reads 0.0 error rate",
+        "is_red_herring": true
+      },
+      {
+        "name": "auth_cache_rewarm_notice",
+        "severity": "P2",
+        "service": "auth",
+        "message": "Auth cache rewarming is slower than usual after maintenance",
+        "is_red_herring": true
+      },
+      {
+        "name": "payment_disk_io_warning",
+        "severity": "P2",
+        "service": "payment",
+        "message": "Payment node disk IO warning appeared during background compaction",
+        "is_red_herring": true
+      }
+    ],
+    "root_cause": "database_overload_requires_circuit_breaker",
+    "correct_actions": [
+      "check_logs:database",
+      "scale_up:database",
+      "enable_circuit_breaker:payment"
+    ],
+    "resolution_condition": {
+      "database": "ok",
+      "payment": "ok"
+    },
+    "sla_threshold_seconds": 600,
+    "hint": null
+  }
+]

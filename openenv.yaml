@@ -1,0 +1,34 @@
+name: sre-incident-env
+version: "1.0.0"
+description: >
+  SRE Incident Response environment. An AI agent must diagnose and resolve
+  production system failures by interpreting alerts, metrics, and service
+  states — mimicking a real Site Reliability Engineer on call.
+author: ""
+tags: [openenv, sre, incident-response, devops, real-world]
+observation_space:
+  type: object
+  fields:
+    step: int
+    elapsed_seconds: int
+    services: dict
+    alerts: list
+    metrics: dict
+    action_history: list
+    sla_breached: bool
+action_space:
+  type: discrete
+  description: "String command from a fixed set of 16 SRE actions"
+  size: 16
+tasks:
+  - id: easy
+    name: Single Service Failure
+    score_range: [0.0, 1.0]
+  - id: medium
+    name: Cascading Failure with Red Herrings
+    score_range: [0.0, 1.0]
+  - id: hard
+    name: Multi-Service Incident with Faulty Metrics
+    score_range: [0.0, 1.0]
+entry_point: app.py
+port: 7860
