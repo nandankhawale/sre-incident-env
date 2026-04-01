@@ -3,7 +3,14 @@ import random
 from copy import deepcopy
 from pathlib import Path
 
-from openenv.models import Action, Alert, Observation, Reward, ServiceStatus, VALID_ACTIONS
+from sre_incident_env.models import (
+    Action,
+    Alert,
+    Observation,
+    Reward,
+    ServiceStatus,
+    VALID_ACTIONS,
+)
 
 
 STATUS_ORDER = [

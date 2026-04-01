@@ -5,9 +5,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from openenv.env import SREIncidentEnv
-from openenv.models import Action
-from openenv.tasks import TASKS
+from sre_incident_env.env import SREIncidentEnv
+from sre_incident_env.models import Action
+from sre_incident_env.tasks import TASKS
 
 class ResetRequest(BaseModel):
     task: str = "easy"

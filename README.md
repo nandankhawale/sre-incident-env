@@ -380,7 +380,7 @@ sre-incident-env/
 ├── inference.py
 ├── README.md
 ├── validate_submission.py
-├── openenv/
+├── sre_incident_env/
 │   ├── __init__.py
 │   ├── env.py
 │   ├── models.py
