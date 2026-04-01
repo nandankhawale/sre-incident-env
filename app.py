@@ -36,12 +36,13 @@ def root() -> dict:
     }
 
 @app.post("/reset")
-def reset_environment(payload: ResetRequest) -> dict:
-    if payload.task not in TASKS:
+def reset_environment(payload: ResetRequest | None = None) -> dict:
+    task = payload.task if payload is not None else "easy"
+    if task not in TASKS:
         raise HTTPException(status_code=400, detail="Unknown task")
 
     env = SREIncidentEnv()
-    observation = env.reset(task=payload.task)
+    observation = env.reset(task=task)
     session_id = str(uuid4())
     SESSIONS[session_id] = env
     return {
