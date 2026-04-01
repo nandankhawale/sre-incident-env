@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.uv-cache/
 dist/
 build/
 *.log
