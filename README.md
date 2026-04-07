@@ -114,9 +114,10 @@ docker run -p 7860:7860 sre-incident-env
 ### Run Baseline
 
 ```bash
-export API_BASE_URL=http://localhost:7860
-export OPENAI_API_KEY=your_key
-export MODEL_NAME=gpt-4o-mini
+export ENV_BASE_URL=http://localhost:7860
+export API_BASE_URL=https://router.huggingface.co/v1
+export MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct
+export HF_TOKEN=your_token  # optional; the script falls back to a deterministic policy if unavailable
 python inference.py
 ```
 
@@ -395,3 +396,4 @@ sre-incident-env/
 ├── requirements.txt
 └── Dockerfile
 ```
+ 

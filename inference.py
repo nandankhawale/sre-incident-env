@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from typing import Any
 
 import requests
 from openai import OpenAI
@@ -24,17 +25,88 @@ VALID_ACTIONS = [
     "page_senior_engineer",
     "do_nothing",
 ]
+SYSTEM_PROMPT = """You are an expert SRE engineer responding to a
+production incident. Diagnose and resolve the incident as fast as
+possible with the fewest actions.
+
+You must respond with EXACTLY one action string from this list and
+nothing else — no explanation, no punctuation, just the action string:
+
+restart_service:payment
+restart_service:auth
+restart_service:database
+restart_service:order
+restart_service:frontend
+scale_up:database
+scale_up:payment
+rollback_deploy:payment
+rollback_deploy:auth
+enable_circuit_breaker:payment
+enable_circuit_breaker:order
+check_logs:payment
+check_logs:database
+check_logs:auth
+page_senior_engineer
+do_nothing
+
+Strategy:
+- Always check_logs on the most critical service first
+- If a deploy happened recently, rollback_deploy is likely the fix
+- If connection pool is exhausted, scale_up the database
+- Do not restart services before checking logs
+- Ignore alerts that seem unrelated to the main failure
+- Never page_senior_engineer unless all else fails"""
+MAX_STEPS = 20
+TASKS = ["easy", "medium", "hard"]
 
 
-def require_env(name):
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
+def build_user_message(obs: dict) -> str:
+    alerts_str = "\n".join([
+        f"  - {a['name']} ({a['severity']}) on {a['service']}: {a['message']}"
+        for a in obs.get("alerts", [])
+    ])
+    metrics_str = "\n".join([
+        f"  - {k}: {v}"
+        for k, v in obs.get("metrics", {}).items()
+    ])
+    services_str = "\n".join([
+        f"  - {svc}: {status}"
+        for svc, status in obs.get("services", {}).items()
+    ])
+    history_str = (
+        "\n".join([f"  - {a}" for a in obs.get("action_history", [])])
+        or "  (none yet)"
+    )
+    hint = obs.get("hint")
+    hint_str = f"\nHINT: {hint}" if hint else ""
+
+    return f"""INCIDENT STATUS — Step {obs.get('step', 0)} |
+Elapsed: {obs.get('elapsed_seconds', 0)}s |
+SLA breached: {obs.get('sla_breached', False)}
+{hint_str}
+
+SERVICES:
+{services_str}
+
+ACTIVE ALERTS:
+{alerts_str}
+
+METRICS:
+{metrics_str}
+
+ACTIONS TAKEN SO FAR:
+{history_str}
+
+What is your single next action?"""
 
 
-def request_with_retry(method, url, **kwargs):
-    last_error = None
+def log_line(kind: str, **fields: Any) -> None:
+    rendered = [f"{key}={json.dumps(value, separators=(',', ':'))}" for key, value in fields.items()]
+    print(f"[{kind}] {' '.join(rendered)}", flush=True)
+
+
+def request_with_retry(method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+    last_error: Exception | None = None
     for attempt in range(1, 4):
         try:
             if method == "post":
@@ -45,219 +117,187 @@ def request_with_retry(method, url, **kwargs):
                 raise RuntimeError(f"Unsupported HTTP method: {method}")
             response.raise_for_status()
             return response.json()
-        except requests.RequestException as exc:
+        except (requests.RequestException, ValueError) as exc:
             last_error = exc
             if attempt < 3:
                 time.sleep(2)
     raise RuntimeError(f"Request failed after 3 attempts: {url}") from last_error
 
 
-def parse_action(raw_text):
-    action = (raw_text or "").strip().splitlines()[0].strip() if (raw_text or "").strip() else ""
-    if action not in VALID_ACTIONS:
-        print(f"  warning: invalid model action {json.dumps(action)}")
-        return ""
-    return action
+def wait_for_environment(base_url: str, timeout_seconds: int = 60) -> None:
+    deadline = time.time() + timeout_seconds
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            health = request_with_retry("get", f"{base_url}/health")
+            if health.get("status") == "ok":
+                return
+        except Exception as exc:
+            last_error = exc
+        time.sleep(2)
+    raise RuntimeError(f"Environment did not become healthy at {base_url}") from last_error
 
 
-def build_user_message(obs):
-    hint_line = f"Hint: {obs['hint']}" if obs.get("hint") else ""
-    return (
-        f"Step {obs['step']} | Elapsed: {obs['elapsed_seconds']}s\n"
-        f"Services: {obs['services']}\n"
-        f"Active Alerts: {[a['name'] + ' (' + a['severity'] + ')' for a in obs['alerts']]}\n"
-        f"Metrics: {obs['metrics']}\n"
-        f"Actions taken so far: {obs['action_history']}\n"
-        f"SLA breached: {obs['sla_breached']}\n"
-        f"{hint_line}\n"
-        "What is your next action?"
-    )
+def main() -> int:
+    api_base_url = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+    model_name = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+    env_base_url = os.environ.get("ENV_BASE_URL", "http://127.0.0.1:7860")
+    hf_token = os.environ.get("HF_TOKEN", "")
 
-
-def heuristic_action(obs):
-    history = obs["action_history"]
-    services = obs["services"]
-    alerts = obs["alerts"]
-    metrics = obs["metrics"]
-    alert_names = [alert["name"] for alert in alerts]
-
-    if "database_connection_pool_exhausted" in alert_names:
-        return "scale_up:database"
-
-    if obs.get("hint") and "payment service" in obs["hint"].lower():
-        if "check_logs:payment" not in history:
-            return "check_logs:payment"
-        if "rollback_deploy:payment" not in history:
-            return "rollback_deploy:payment"
-
-    if services.get("auth") == "critical" or any(
-        alert["service"] == "auth" and alert["severity"] == "P0" for alert in alerts
-    ):
-        if "check_logs:auth" not in history:
-            return "check_logs:auth"
-        if "rollback_deploy:auth" not in history:
-            return "rollback_deploy:auth"
-
-    database_is_suspicious = (
-        services.get("database") in {"critical", "degraded"}
-        or metrics.get("database_cpu_pct", 0.0) >= 90.0
-        or metrics.get("database_conn_pool_pct", 0.0) >= 97.0
-        or any(alert["service"] == "database" for alert in alerts)
-    )
-    payment_is_impacted = services.get("payment") in {"down", "critical", "degraded"}
-    order_is_impacted = services.get("order") in {"critical", "degraded"}
-
-    if database_is_suspicious and (payment_is_impacted or order_is_impacted):
-        if "check_logs:database" not in history and any(
-            alert["service"] == "database" for alert in alerts
-        ):
-            return "check_logs:database"
-        if services.get("database") != "ok":
-            return "scale_up:database"
-        if services.get("payment") != "ok" and "enable_circuit_breaker:payment" not in history:
-            return "enable_circuit_breaker:payment"
-
-    if payment_is_impacted:
-        if "check_logs:payment" not in history and any(
-            alert["service"] == "payment" for alert in alerts
-        ):
-            return "check_logs:payment"
-        if "rollback_deploy:payment" not in history:
-            return "rollback_deploy:payment"
-        if "enable_circuit_breaker:payment" not in history:
-            return "enable_circuit_breaker:payment"
-
-    return None
-
-
-def is_low_signal_action(action):
-    return (
-        action.startswith("restart_service:")
-        or action == "do_nothing"
-        or action == "page_senior_engineer"
-    )
-
-
-def choose_action(obs, proposed_action):
-    history = obs["action_history"]
-    heuristic = heuristic_action(obs)
-
-    if proposed_action not in VALID_ACTIONS:
-        fallback = heuristic or "do_nothing"
-        print(f"  warning: defaulting to {fallback}")
-        return fallback
-
-    if heuristic and heuristic != proposed_action:
-        if is_low_signal_action(proposed_action):
-            print(f"  note: overriding low-signal action {proposed_action} -> {heuristic}")
-            return heuristic
-        if history and proposed_action == history[-1]:
-            print(f"  note: avoiding repeated action {proposed_action} -> {heuristic}")
-            return heuristic
-        if proposed_action in history and heuristic not in history:
-            print(f"  note: preferring fresh action {heuristic} over repeated {proposed_action}")
-            return heuristic
-
-    return proposed_action
-
-
-def main():
-    api_base_url = require_env("API_BASE_URL").rstrip("/")
-    require_env("OPENAI_API_KEY")
-    model_name = require_env("MODEL_NAME")
+    if not openai_api_key and hf_token:
+        openai_api_key = hf_token
 
     client = OpenAI(
-        api_key=os.environ["OPENAI_API_KEY"],
-        base_url=os.environ.get("API_BASE_URL_LLM", "https://api.openai.com/v1")
+        api_key=openai_api_key,
+        base_url=api_base_url
     )
 
-    system_prompt = (
-        "You are an expert SRE engineer responding to a production incident.\n"
-        "You must diagnose and resolve the incident as fast as possible.\n\n"
-        "Available actions (you must respond with EXACTLY one of these strings):\n"
-        "restart_service:payment, restart_service:auth, restart_service:database,\n"
-        "restart_service:order, restart_service:frontend,\n"
-        "scale_up:database, scale_up:payment,\n"
-        "rollback_deploy:payment, rollback_deploy:auth,\n"
-        "enable_circuit_breaker:payment, enable_circuit_breaker:order,\n"
-        "check_logs:payment, check_logs:database, check_logs:auth,\n"
-        "page_senior_engineer, do_nothing\n\n"
-        "Respond with ONLY the action string. Nothing else. No explanation."
-    )
+    overall_start = time.time()
+    scores = {task: 0.0 for task in TASKS}
 
-    scores = {}
-    start_time = time.time()
+    try:
+        wait_for_environment(env_base_url.rstrip("/"))
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        for task in TASKS:
+            log_line(
+                "START",
+                task=task,
+                session_id=None,
+                model_name=model_name,
+                api_base_url=api_base_url,
+                env_base_url=env_base_url,
+                initial_step=None,
+                initial_elapsed_seconds=None,
+            )
+            log_line(
+                "END",
+                task=task,
+                score=0.0,
+                resolved=False,
+                elapsed_seconds=0,
+                wrong_actions=0,
+                llm_failures=0,
+                error=error,
+            )
+        log_line(
+            "END",
+            average_score=0.0,
+            easy_score=0.0,
+            medium_score=0.0,
+            hard_score=0.0,
+            runtime_seconds=round(time.time() - overall_start, 3),
+            error=error,
+        )
+        return 0
 
-    for task_name in ["easy", "medium", "hard"]:
+    for task in TASKS:
         reset_data = request_with_retry(
             "post",
-            f"{api_base_url}/reset",
-            json={"task": task_name},
+            f"{env_base_url.rstrip('/')}/reset",
+            json={"task": task},
         )
         session_id = reset_data["session_id"]
-        observation = reset_data["observation"]
+        obs = reset_data["observation"]
         final_info = {
             "task_score": 0.0,
             "resolved": False,
-            "elapsed_seconds": observation["elapsed_seconds"],
+            "elapsed_seconds": obs["elapsed_seconds"],
             "wrong_actions": 0,
         }
+        llm_failures = 0
 
-        for step in range(1, 21):
-            user_message = build_user_message(observation)
-            completion = client.chat.completions.create(
-                model=os.environ["MODEL_NAME"],
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                max_tokens=20,
-                temperature=0.0
-            )
-            raw_action = completion.choices[0].message.content if completion.choices else ""
-            proposed_action = parse_action(raw_action)
-            action = choose_action(observation, proposed_action)
+        log_line(
+            "START",
+            task=task,
+            session_id=session_id,
+            model_name=model_name,
+            api_base_url=api_base_url,
+            env_base_url=env_base_url,
+            initial_step=obs["step"],
+            initial_elapsed_seconds=obs["elapsed_seconds"],
+        )
+
+        for step in range(1, MAX_STEPS + 1):
+            user_message = build_user_message(obs)
+
+            proposed_action = ""
+            llm_error = None
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_message}
+                    ],
+                    max_tokens=20,
+                    temperature=0.0
+                )
+                content = response.choices[0].message.content if response.choices else ""
+                content = content.strip() if content else ""
+                proposed_action = content.splitlines()[0].strip() if content else ""
+            except Exception as exc:
+                llm_error = str(exc)
+                proposed_action = ""
+                llm_failures += 1
+
+            if proposed_action in VALID_ACTIONS:
+                action = proposed_action
+            else:
+                action = "do_nothing"
 
             step_data = request_with_retry(
                 "post",
-                f"{api_base_url}/step",
+                f"{env_base_url.rstrip('/')}/step",
                 json={"session_id": session_id, "action": {"command": action}},
             )
-            observation = step_data["observation"]
+
             reward = step_data["reward"]
             done = step_data["done"]
             final_info = step_data["info"]
+            obs = step_data["observation"]
 
-            print(f"  step {step}: action={action}  reward={reward['immediate']:.2f}")
+            log_line(
+                "STEP",
+                task=task,
+                step=step,
+                action=action,
+                proposed_action=proposed_action,
+                llm_error=llm_error,
+                reward_immediate=reward["immediate"],
+                reward_cumulative=reward["cumulative"],
+                reward_final=reward.get("final"),
+                done=done,
+                elapsed_seconds=final_info["elapsed_seconds"],
+                wrong_actions=final_info["wrong_actions"],
+            )
 
             if done:
                 break
 
-        scores[task_name] = final_info["task_score"]
-        print(
-            f"[{task_name.upper()}] score={final_info['task_score']:.3f}  "
-            f"resolved={final_info['resolved']}  "
-            f"elapsed={final_info['elapsed_seconds']}s  "
-            f"wrong_actions={final_info['wrong_actions']}"
+        scores[task] = float(final_info["task_score"])
+        log_line(
+            "END",
+            task=task,
+            score=final_info["task_score"],
+            resolved=final_info["resolved"],
+            elapsed_seconds=final_info["elapsed_seconds"],
+            wrong_actions=final_info["wrong_actions"],
+            llm_failures=llm_failures,
         )
 
-    runtime = time.time() - start_time
-    avg = (scores["easy"] + scores["medium"] + scores["hard"]) / 3.0
-
-    print(
-        f"""
-══════════════════════════════════════
-BASELINE RESULTS — {model_name}
-══════════════════════════════════════
-Easy   : {scores['easy']:.3f}
-Medium : {scores['medium']:.3f}
-Hard   : {scores['hard']:.3f}
-Overall: {avg:.3f}
-Total runtime: {runtime:.1f}s
-══════════════════════════════════════
-"""
+    average_score = sum(scores.values()) / len(TASKS)
+    log_line(
+        "END",
+        average_score=average_score,
+        easy_score=scores["easy"],
+        medium_score=scores["medium"],
+        hard_score=scores["hard"],
+        runtime_seconds=round(time.time() - overall_start, 3),
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
