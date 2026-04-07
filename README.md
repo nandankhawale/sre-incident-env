@@ -73,27 +73,27 @@ The motivation is to evaluate whether a model can reason through noisy operation
 
 The easy task family represents a single-service issue with a clear and localizable root cause. Scenarios include a bad payment deploy and a saturated database connection pool. The agent is expected to identify the obvious remediation quickly, using the optional hint when present and minimizing wasted actions.
 
-Expected agent behaviour is to read the alert, match it to the most likely service-level intervention, and restore the impacted system within five minutes. Scoring is `1.0` if the incident is resolved under SLA, `0.5` if resolved after SLA, and `0.0` if unresolved. Baseline score: `0.850`.
+Expected agent behaviour is to read the alert, match it to the most likely service-level intervention, and restore the impacted system within five minutes. Scoring is `1.0` if the incident is resolved under SLA, `0.5` if resolved after SLA, and `0.0` if unresolved. Baseline score: `1.000`.
 
 ### Task 2 — Medium: Cascading Failure with Red Herrings
 
 The medium task introduces multi-service impact and misleading telemetry. The root cause sits in one component, but several downstream systems show symptoms and unrelated alerts compete for attention. The agent must trace the dependency chain instead of reacting only to the loudest surface symptom.
 
-This task is harder because it mixes real signals with red herrings and allows only limited mistakes before score quality drops. Scoring is `1.0` if resolved under SLA with at most one wrong action, `0.5` if resolved but outside the top-quality band, and `0.0` if unresolved. Baseline score: `0.650`.
+This task is harder because it mixes real signals with red herrings and allows only limited mistakes before score quality drops. Scoring is `1.0` if resolved under SLA with at most one wrong action, `0.5` if resolved but outside the top-quality band, and `0.0` if unresolved. Baseline score: `1.000`.
 
 ### Task 3 — Hard: Multi-Service Incident with Faulty Metrics
 
 The hard task combines cascading failure, multiple misleading alerts, and one broken metric that always reports `0.0`. The agent must recognize that not all observability inputs are trustworthy, mitigate customer impact, and fix the real bottleneck without making any mistakes.
 
-This is the hardest setting because the agent has to reason across several services while discounting false evidence and preserving a perfect action sequence. Scoring is `1.0` only if the incident is resolved under SLA with zero wrong actions, `0.3` if resolved with mistakes, and `0.0` otherwise. Baseline score: `0.150`.
+This is the hardest setting because the agent has to reason across several services while discounting false evidence and preserving a perfect action sequence. Scoring is `1.0` only if the incident is resolved under SLA with zero wrong actions, `0.3` if resolved with mistakes, and `0.0` otherwise. Baseline score: `0.300`.
 
 ## Baseline Scores
 
 | Task | Model | Score | Resolved | Elapsed | Wrong Actions |
 | --- | --- | --- | --- | --- | --- |
-| Easy | `gpt-4o-mini` | `0.850` | `True` | `180s` | `0` |
-| Medium | `gpt-4o-mini` | `0.650` | `True` | `360s` | `1` |
-| Hard | `gpt-4o-mini` | `0.150` | `False` | `600s` | `3` |
+| Easy | `gpt-4o-mini` | `1.000` | `True` | `60s` | `0` |
+| Medium | `gpt-4o-mini` | `1.000` | `True` | `60s` | `0` |
+| Hard | `gpt-4o-mini` | `0.300` | `True` | `180s` | `3` |
 
 ## Setup & Usage
 
